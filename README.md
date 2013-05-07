@@ -244,7 +244,7 @@ The sysman comman line variables are interpreted by the procedure lookupvar.
  - Make sysman modular for OS's outside the Unix family. The OS can be specified in hosts.dat. 
  - Port the whole thing to SCHEME (requires porting Expect first) 
 
- ## License (MIT)
+## License (MIT)
 
  Copyright (c) 2000,2013 Ron Pressler
 
