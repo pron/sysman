@@ -6,8 +6,6 @@
 
 sysman is a multi-host management utility similar to VMS's Sysman tool. With sysman it is possible to execute a command or run a script on multiple hosts simultaneously with the aid of additional features designed to make the life easier. 
 (In this documentation the words "host" and "node" are used interchangeably.)
-
-sysman is now in its pre-alpha stages so it's files are quite messy. 
  
 
 ## Features
@@ -121,7 +119,7 @@ shutdown <params>
 sends the shutdown command to the remote hosts and disconnects them. you can shut down a subset of the hosts by using `!<hostnames>: !shutdown ...` 
  
 
-### sysman environment variables
+### Sysman Environment Variables
 
     echo - sets echoing of the sent commands (after translation) 
     convert - sets translation on/off 
@@ -132,7 +130,7 @@ sends the shutdown command to the remote hosts and disconnects them. you can shu
     comment - set the string comment. lines beginning with this string will not be sent 
  
 
-### sysman command line variables
+### Sysman Command Line Variables
 
     $hosts - a list of all currently connected hosts 
     $host - for each host, equals the name of the host the command is running on 
@@ -143,7 +141,7 @@ These variables can be used in any command. The variables `$1`,`$2`,... and `$*`
 
 The variable $host has a different value for each host. For example, typing `echo $host` would result in each host echoing its name (the one used by sysman). This variable is usually used in local redirection (See below).
 
-### sysman files
+### Sysman Files
 
     `hosts.dat` - host names and adresses 
     `groups.dat` - host groups definitions 
@@ -180,7 +178,7 @@ Format:
     for more information turn to the TCL documentation on the regsub command. 
  
 
-### host names
+### Host Names
 
 Whenever a list of host names (or a single host name) is needed, it should be given as a space separated list of host or group names. 
 The group names are the ones found in the groups.dat file, and the host names are the ones found in hosts.dat or (if not found there) the host's URL (or IP address). 
@@ -189,8 +187,11 @@ You can exclude a host or a group from the list by prefixing its name with a til
 If the list contains only names prefixed by a tilda, the expanded list will include all of those hosts currently connected except for those excluded.
 
 Examples: 
+
 Assume: group1 = { host1 host2 }, group2 = { host2 host3 }, group3 = { group1 group2 } 
+
 if we are connected to group1, then: 
+
 `!host1: <command>` - executes on host1 
 `!group2: <command>` - executes on host2 
 `!~group2: <command>` - executes on host1 
@@ -215,26 +216,27 @@ Examples:
     cat info !| process_info 
     !run my_script.sh !| tail -5 > $host/max
 
-### sysman scripts
+### Sysman Scripts
 
-Since sysman is a shell it can run its own scripts. To make a sysman script use #!/.../sysman at the script's top line. 
-The variables $1.$2,... and $* will contain the arguments passed to the script.
+Since sysman is a shell it can run its own scripts. To make a sysman script use `#!/.../sysman` at the script's top line. 
+The variables `$1`, `$2`,... and `$*` will contain the arguments passed to the script.
 
-## sysman internals (in brief)
+## Sysman Internals (in brief)
 
 The way sysman works is by managing multiple telnet sessions - one per each connected host, collecting the output and presenting it sensibly.
 
 sysman has two main loops: one when running interactively and one when running a script (both in the --MAIN-section) . These loops are a good place to start.
 
-sysman's interface makes use of dumbsh (dumb shell) - a readline shell that does nothing other than print the command typed (this gets intercepted by sysman with Expect's  interact command). Dumbsh has a primitive interface which allows it to be given a list of words to be used as a completion list (with the TAB key) - at the command line type -c, then Enter and then a space seperated list of words and then Enter again. 
-To build dumbsh type: gcc -lreadline dumbsh.c -o dumbsh
+sysman's interface makes use of `dumbsh` (dumb shell) - a readline shell that does nothing other than print the command typed (this gets intercepted by sysman with Expect's  interact command). `dumbsh` has a primitive interface which allows it to be given a list of words to be used as a completion list (with the TAB key) - at the command line type -c, then Enter and then a space seperated list of words and then Enter again. 
+
+To build dumbsh type: `gcc -lreadline dumbsh.c -o dumbsh`
 
 The command gets processed by the do_command proc.
 
 The heart of sysman is the two procedures rsh and rsh_par that handle the output returned from the hosts when running in sequential or parallel mode respectively. Because rsh_par has to correctly handle input that comes from many sources simultaneously, the procedure is a rather complex state machine and is quite difficult to understand (so is the procedure "connect" which connects to the hosts in parallel). 
 The main issue in the output handling is determining whether the output from all the hosts is directed to the same file (output "conflict") or to different files (in which case it is not necessary to print the hostname title at the top of the output). If we pipe the output to a program, a different instance of the program is started for each host, however there might still be an output conflict if after the pipe chain, the output flows to the screen (or to the same file), so sysman uses lsof to determine the final file the output flows to.
 
-An environment variable "X" is simply the global variable "var_X" and the sysman command "Y" is simply the procedure "cmd_Y". All environment variables should be added to the global list "sysman_vars" and all sysman commands should be added to the list "sysman_commands".
+An environment variable "X" is simply the global variable "var_X" and the sysman command "Y" is simply the procedure "cmd_Y". All environment variables should be added to the global list `sysman_vars` and all sysman commands should be added to the list `sysman_commands`.
 
 The sysman comman line variables are interpreted by the procedure lookupvar.
 
