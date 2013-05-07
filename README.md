@@ -22,7 +22,7 @@ sysman is now in its pre-alpha stages so it's files are quite messy.
  - Online help. 
  - Easily extendable.
 
-1. Requirements
+## Requirements
 
 In order to use sysman you will need the following: 
  - The Expect interpreter (sysman was written in Expect) 
