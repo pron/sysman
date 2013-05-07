@@ -39,7 +39,7 @@ In order to use sysman you will need the following:
 `[-n <hosts/groups...>(.*)]` = names of nodes or node-groups to connect to. 
 `[-- <command line arguments>]` = arguments for use in a sysman script.
 
-4.2 Basic Use
+### Basic Use
 
     <command> [! <local pipes>]
 
