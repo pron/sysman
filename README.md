@@ -118,31 +118,30 @@ if user is NOT omitted, you can specify the new password in the command line.
 ```
 shutdown <params> 
 ```
-sends the shutdown command to the remote hosts and disconnects them. you can shut down a subset of the hosts by using "!<hostnames>: !shutdown ..." 
+sends the shutdown command to the remote hosts and disconnects them. you can shut down a subset of the hosts by using `!<hostnames>: !shutdown ...` 
  
 
 ### sysman environment variables
 
-    `echo` - sets echoing of the sent commands (after translation) 
-    `convert` - sets translation on/off 
-    `timeout` - sets the time for connection timeout 
-    `delay` - sets file transfer speed 
-    `color` - sets host title color (0 - disabled) 
-    `parallel` - set parallel execution 
-    `comment` - set the string comment. lines beginning with this string 
-will not be sent 
+    echo - sets echoing of the sent commands (after translation) 
+    convert - sets translation on/off 
+    timeout - sets the time for connection timeout 
+    delay - sets file transfer speed 
+    color - sets host title color (0 - disabled) 
+    parallel - set parallel execution 
+    comment - set the string comment. lines beginning with this string will not be sent 
  
 
 ### sysman command line variables
 
-    `$hosts` - a list of all currently connected hosts 
-    `$host` - for each host, equals the name of the host the command is running on 
-    `$1`, `$2`, ... - the command line arguments 
-    `$*` - all the command line arguments
+    $hosts - a list of all currently connected hosts 
+    $host - for each host, equals the name of the host the command is running on 
+    $1, $2, ... - the command line arguments 
+    $* - all the command line arguments
 
-These variables can be used in any command. The variables $1,$2,... and $* are the values passed to sysman when it was started and are especially useful in sysman scripts (See below).
+These variables can be used in any command. The variables `$1`,`$2`,... and `$*` are the values passed to sysman when it was started and are especially useful in sysman scripts (See below).
 
-The variable $host has a different value for each host. For example, typing "echo $host" would result in each host echoing its name (the one used by sysman). This variable is usually used in local redirection (See beclow).
+The variable $host has a different value for each host. For example, typing `echo $host` would result in each host echoing its name (the one used by sysman). This variable is usually used in local redirection (See below).
 
 ### sysman files
 
@@ -152,32 +151,32 @@ The variable $host has a different value for each host. For example, typing "ech
 
 `hosts.dat` - host names adresses (and other information in future versions).
 
-    Format: 
-       hostname address (other info) 
-       ...
+Format: 
+    hostname address (other info) 
+    ...
 
 `groups.dat` - host groups definitions
 
 The host name used is according to the hostname format (see below).
 
-    Format: 
-```
-       groupname 
-       hostname/groupname 
-       hostname/groupname 
-       ...
+Format: 
 
-       groupname 
-       hostname/groupname 
-       hostname/groupname 
-       ...
+    groupname 
+    hostname/groupname 
+    hostname/groupname 
+    ...
+    
+    groupname 
+    hostname/groupname 
+    hostname/groupname 
+    ...
+    
+    ...
 
-       ...
-```
 
 `convert.dat` - automatic conversion specifications 
     hostname/groupname:source string:target string 
-    the conversion performed is "regsub -- {<source string>} $command {<target string>} command 
+    the conversion performed is `regsub -- {<source string>} $command {<target string>}` command 
     for more information turn to the TCL documentation on the regsub command. 
  
 
@@ -189,16 +188,17 @@ The list is to include a list of all the hosts in the specified hosts/groups lis
 You can exclude a host or a group from the list by prefixing its name with a tilda (~). 
 If the list contains only names prefixed by a tilda, the expanded list will include all of those hosts currently connected except for those excluded.
 
-    Examples: 
- Assume: group1 = { host1 host2 }, group2 = { host2 host3 }, group3 = { group1 group2 } 
- if we are connected to group1, then: 
-    "!host1: <command>" - executes on host1 
-    "!group2: <command>" - executes on host2 
-    "!~group2: <command>" - executes on host1 
- if we are connected to group3, then: 
-    "!group1 host3: <command>" - executes on host1, host2, host3 
-    "!group1 ~group2: <command>" - executes on host1" 
-    "!~group1: <command>: <command>" - executes on host3" 
+Examples: 
+Assume: group1 = { host1 host2 }, group2 = { host2 host3 }, group3 = { group1 group2 } 
+if we are connected to group1, then: 
+`!host1: <command>` - executes on host1 
+`!group2: <command>` - executes on host2 
+`!~group2: <command>` - executes on host1 
+
+If we are connected to group3, then: 
+`!group1 host3: <command>` - executes on host1, host2, host3 
+`!group1 ~group2: <command>` - executes on host1" 
+`!~group1: <command>: <command>` - executes on host3" 
  
 
 ### Local Redirection
@@ -208,12 +208,12 @@ In order to redirect output from a command or a shell script run by the !run com
 When redirecting output from multiple hosts to a single file, use the >> operator. 
 You can redirect output from multiple hosts to multiple files by using the $host variable in the file name or path.
 
-    Examples:
+Examples:
 
- uptime !>> uptime.out 
- !run my_script.sh !> $host.my_script.out 
- cat info !| process_info 
- !run my_script.sh !| tail -5 > $host/max
+    uptime !>> uptime.out 
+    !run my_script.sh !> $host.my_script.out 
+    cat info !| process_info 
+    !run my_script.sh !| tail -5 > $host/max
 
 ### sysman scripts
 
@@ -249,7 +249,7 @@ The sysman comman line variables are interpreted by the procedure lookupvar.
 
 ## License (MIT)
 
-Copyright (c) 2000,2013 Ron Pressler
+Copyright (c) 2000, 2013 Ron Pressler
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
