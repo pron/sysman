@@ -1,0 +1,3 @@
+lins:^ls:ls --color
+lins:^ps  -Af -o:ps -A -o
+

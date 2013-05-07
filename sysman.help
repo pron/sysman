@@ -1,0 +1,185 @@
+set banner {
+
+--------------------
+    SYSMAN 
+ Version: 1.1  
+--------------------
+
+}
+
+#------------------------------ HELP -----------------------------------
+
+set help(main) {
+    USAGE: sysman [sysman script filename] [-n <hosts/groups...>(.*)] [-- <command line arguments>]
+
+    BASIC USE:
+    command [! <local pipes>]
+    the command is run on all connected nodes. the output may be piped to local files or programs. 
+    refer to topic "redirection" and the documentation for details.
+
+    ! <hostnames>: <command> - runs the unix/sysman command on the specified hosts/groups. 
+                               type "help hostames for more info."
+
+    SYSMAN commands to be run by !<command>:
+    help <topic> - displays help
+    hosts - displays host information
+    connect - connects to hosts
+    run - runs a local script
+    set - sets a sysman environment variable
+    talk - interacts directly with a host
+    put - sends a file or a directory
+    get - receives a file or a directory
+    passwd - change the password on the hosts
+    shutdown - shutdown the remote hosts
+
+    all other commands (that begin with a !) are executed by the local shell
+    
+    SYSMAN environment variables:
+    echo - sets echoing of the sent commands (after translation)
+    convert - sets translation on/off
+    timeout - sets the time for connection timeout
+    delay - sets file transfer speed
+    color - sets host title color (0 - disabled)
+    parallel - set parallel execution
+    comment - set the string comment. lines beginning with this string will not be sent
+
+    SYSMAN variables:
+    $hosts - a list of all currently connected hosts
+    $host - for each host, equals the name of the host the command is running on
+    $1, $2, ... - the command line arguments
+    $* - all the command line arguments
+
+    SYSMAN files:
+    hosts.dat - host adresses (and other information in future versions)
+    groups.dat - host groups definitions
+    convert.dat - conversion specifications
+    For more information type: help files
+}
+
+set help(hosts) {
+    hosts [-a]
+      displays a list of the connected hosts.
+      -a: shows additional group and translation information
+}
+
+set help(connect) {
+    connect <hosts/groups list>
+      connects to the hosts and the host groups (defined in groups.dat) specified.
+}
+
+set help(run) {
+    run <shell script filename>
+       runs the specified script on the remote nodes hosts translation.
+}
+
+set help(put) {
+    put <filespec/directory> [<target dir>]
+       sends the specified files or directory to the remote hosts into the target directory.
+       to send a file to a subset of the connected hosts, prefix the put command with the 
+       host names format ( !<hostnames>: !put ... )
+}
+
+set help(get) {
+    get <filespec/directory> [<target dir>]
+       receives the specified files or directory from the remote hosts into the target directory.
+       if multiple hosts are connected, it is necessary to put the files from each hosts into a
+       separate directory. this can be accomplished by using the $host variable.
+
+       to receive a file from a subset of the connected hosts, prefix the get command with the 
+       host names format ( !<hostnames>: !get ... )
+}
+
+set help(set) {
+    set <environment variable> [<value>]
+       if no value is specified, the current value of the variable is displayed.
+       a value of "off" is equivalent to a value of 0, and a value of "on" is equivalent to 1.
+}
+
+set help(talk) {
+    talk <host>
+       allows you to interact directly with the host in a telnet session.
+       return to SYSMAN by pressing ^]
+       "talk local" talks to the local shell.
+}
+
+set help(passwd) {
+    passwd [<user>] [<new password>]
+       if user is ommitted the password is changed for the current user.
+       if user is NOT ommitted, you can specify the new password in the command line
+}
+
+set help(shutdown) {
+    shutdown <params>
+	sends the shutdown command to the remote hosts and disconnects them.
+	you can shut down a subset of the hosts by using "!<hostnames>: !shutdown ..."
+}
+
+set help(parallel) {
+    !set parallel <1/0>
+       when parallel = 1 commands and scripts (!run) are run in parallel on all hosts.
+       when parallel = 0 commands and scripts are executed one host after another.
+}
+
+set help(redirection) {
+    In order to redirect output from a command or a shell script run by the !run command
+    to a local file or program, prefix the redirection symbol (>,>>,|) with '!'.
+    When redirecting output from multiple hosts to a single file, use the >> operator.
+    You can redirect output from multiple hosts to multiple files by using the $host
+    variable in the file name or path.
+
+    Examples:
+
+	uptime !>> uptime.out
+	!run my_script.sh !> $host.my_script.out
+	cat info !| process_info
+	!run max_user_command.sh !| tail -5 > $host/max
+}
+    
+set help(hostnames) {
+    ! <hostnames>: <command> - runs the unix/sysman command on the specified hosts/groups. 
+	
+    <hostnames> is a space separated list of host names and group names. the list is
+    expanded internally to include a list of all the hosts in the specified hosts/groups
+    list. the command will be run on all hosts in the resulting internal list that are
+    currently connected.
+    you can exclude a host or a group from the list by prefixing its name with a tilda (~).
+    if the list contains only names prefixed by a tilda, the expanded list will include all
+    of those hosts currently connected except for those excluded.
+
+    Examples:
+	Assume: group1 = { host1 host2 }, group2 = { host2 host3 }, group3 = { group1 group2 }
+	if we are connected to group1, then:
+	   "!host1: <command>" - executes on host1
+	   "!group2: <command>" - executes on host2
+	   "!~group2: <command>" - executes on host1
+	if we are connected to group3, then:
+	   "!group1 host3: <command>" - executes on host1, host2, host3
+	   "!group1 ~group2: <command>" - executes on host1"
+	   "!~group1: <command>: <command>" - executes on host3"
+}
+
+set help(files) {
+    hosts.dat - host adresses (and other information in future versions)
+    Format:
+       hostname address (other info)
+       ...
+
+    groups.dat - host groups definitions
+    Format:
+       groupname
+       hostname/groupname
+       hostname/groupname
+       ...
+
+       groupname
+       hostname/groupname
+       hostname/groupname
+       ...
+
+       ...
+
+    convert.dat - conversion specifications
+    hostname/groupname:source string:target string
+    the conversion performed is "regsub -- {<source string>} $command {<target string>} command
+    for more information turn to the TCL documentation on the regsub command.
+}

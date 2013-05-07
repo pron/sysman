@@ -1,0 +1,393 @@
+# Copyright (c) 2000,2013 Ron Pressler
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+#-------------- sysman commands -------------------
+
+lappend sysman_commands exit
+proc cmd_exit { params ignore ignore } {
+    exit
+}
+
+lappend sysman_commands connect
+proc cmd_connect { params ignore ignore } { 
+    global groups hosts var_timeout
+    global timeout
+
+    set tmphosts [get_hosts $params]
+    foreach host $tmphosts {
+	if [member $hosts $host] {
+	    puts "$host is already connected."
+	    lremove tmphosts [lsearch $tmphosts $host]
+	}
+    }   
+
+    set old_timeout $timeout
+    set timeout $var_timeout
+
+    if { [llength $tmphosts] > 0 } {
+	get_log_pass login password
+	connect $tmphosts $login $password
+    }
+
+    set timeout $old_timeout
+}
+
+lappend sysman_commands hosts
+proc cmd_hosts { params ignore ignore } {
+    global hosts hdata
+
+    set info 0
+    if { ![empty [extract_flag params "a" 0]] } {
+	set info 1
+    }
+    foreach host $hosts {
+	puts "$host"
+	if { $info } {
+	    puts "address: $hdata($host,address)"
+	    puts "login: $hdata($host,login)" 
+	    puts "groups: $hdata($host,groups)"
+	    puts "conversions:\n$hdata($host,convert)"
+	}
+    }
+}
+
+lappend sysman_commands set
+proc cmd_set { params ignore ignore } {
+    global sysman_vars 
+ 
+    set var [car $params]
+    if { ![member $sysman_vars $var] } {
+	error "variable $var does not exist"
+    }
+
+    global var_$var
+    if { [llength $params] > 1 } {
+	set val [car [cdr $params]]
+	if [equal $val "on"]  { set val 1 }
+	if [equal $val "off"] { set val 0 }
+	set var_$var $val
+	if { ![empty [info procs set_[set var]]] } {
+	    set_[set var]
+	}
+    }
+    puts "  $var = [set var_[set var]]"
+}
+
+lappend sysman_commands run
+proc cmd_run { params hosts pipe } {
+    global hdata
+
+    rsc $hosts [car $params] [cdr $params] $pipe
+}
+
+# for the command "help <topic>" dusplays the variable help_<topic>
+lappend sysman_commands help
+proc cmd_help { params ignore ignore } {
+    global help
+    if { [llength $params] == 0 } {
+	puts $help(main)
+    } else {
+	set topic [car $params]
+	if { [info exists help($topic)] } {
+	    puts $help($topic)
+	} else {
+	    error "No help available on $topic"
+	}
+    }
+}
+
+#---------------------------------- talk ----------------------------------------------------
+
+lappend sysman_commands talk
+proc cmd_talk { params hosts ignore } {
+    global sids prompt
+    if { [llength $params] != 1 } {
+	error "You must talk to one host"
+    }
+    set host [car $params]
+    switch_to $sids($host)
+    rexec "stty echo"
+    puts "Talking to $host"
+    puts "^] to escape"
+    send "\r"
+    interact {
+	-reset "\035" { puts ""; return }
+	-o
+	-reset eof { disconnect $host; inter_return }
+    }
+    send "\003"; 
+    expect -re $prompt
+    rexec "stty -echo"
+}
+
+#---------------------------------- get & put -----------------------------------------------
+
+lappend sysman_vars delay
+set var_delay 0.005
+
+lappend sysman_commands put
+proc cmd_put { params hosts ignore } {
+    global hdata
+
+    set from [lindex $params 0]
+    if { [llength $params] > 1 } {
+	set to [lindex $params 1]
+    } else {
+	set to "\."
+    }
+    foreach host $hosts {
+	switch_to $hdata($host,sid)
+	title stdout 
+	put $from $to
+    }
+}
+
+lappend sysman_commands get
+proc cmd_get { params hosts ignore } { 
+    global sids
+
+    set from [car $params]
+    set host ""
+
+    if { [llength $params] > 1 } {
+	set to [lindex $params 1]
+    } elseif { [llength $hosts] < 2 } {
+	set to "\."
+    } else {
+	error "You must specify a destination when copying from multiple hosts"
+    }
+    foreach host $hosts {
+	switch_to $sids($host)    
+	title stdout
+	get $from [parse $to]
+    }
+}
+
+proc put { infile outdir } {
+    up spawn_id
+    global prompt var_delay sids
+
+    set rpid [rpid]
+    set pid [pid]
+    
+    set infile_plain "/tmp/$pid"
+    set infile_compressed "$infile_plain.Z"
+    set infile_encoded "$infile_compressed.uu"
+
+    set outfile_plain "/tmp/$rpid"
+    set outfile_compressed "$outfile_plain.Z"
+    set outfile_encoded "$outfile_compressed.uu"
+
+    # tar, compress and uuencode
+    
+    rexec -i $sids(local) "tar cf - $infile | compress -c | uuencode $outfile_compressed > $infile_encoded"
+    
+    # send file
+    set in [open $infile_encoded r]
+    send "cat > $outfile_encoded\r"
+    while 1 {
+	if {-1 == [gets $in buf]} break
+	sleep $var_delay
+	send "$buf\r"
+	blinker
+    }
+    send "\004"  ;# eof
+    expect -re $prompt
+    close $in
+    puts "\bdone"
+
+    # decode, uncompress and rename
+    set wd [rexec pwd]
+    rexec "cd $outdir"
+    rexec "uudecode $outfile_encoded"
+    rexec "uncompress -c $outfile_compressed | tar xf -"
+    rexec "cd $wd"
+    
+    # delete temp files
+    rexec -i $sids(local) "rm -f $infile_encoded"
+    rexec "rm -f $outfile_encoded $outfile_compressed"
+}
+
+proc get { infile outdir } {
+    global prompt var_delay sids
+    up spawn_id
+
+    set rpid [rpid]
+    set pid [pid]
+
+    set infile_plain "/tmp/$rpid"
+    set infile_compressed "$infile_plain.Z"
+    set infile_encoded "$infile_compressed.uu"
+
+    set outfile_plain "/tmp/$pid"
+    set outfile_compressed "$outfile_plain.Z"
+    set outfile_encoded "$outfile_compressed.uu"
+
+    # tar, compress and uuencode
+    rexec "tar cf - $infile | compress -c | uuencode $outfile_compressed > $infile_encoded"
+    
+    # receive file
+    set out [open $outfile_encoded w]
+    send "cat $infile_encoded\r"
+    expect {
+	-re "^end\r\n" { puts $out "end" }
+	-re "^(\[^\r]*)\r\n" {
+	    puts $out $expect_out(1,string)
+	    sleep $var_delay
+	    blinker
+	    exp_continue
+	}
+    }
+    expect -re $prompt
+    close $out
+    puts "\bdone"
+
+    # decode, uncompress and rename
+    set wd [rexec -i $sids(local) pwd]
+    rexec -i $sids(local) "cd $outdir"
+    rexec -i $sids(local) "uudecode $outfile_encoded"
+    rexec -i $sids(local) "uncompress -c $outfile_compressed | tar xf -"
+    rexec -i $sids(local) "cd $wd"
+
+    # delete temp files
+    rexec "rm -f $infile_encoded"
+    rexec -i $sids(local) "rm -f $outfile_encoded $outfile_compressed"
+}
+
+#-------------------------- passwd --------------------------------------
+
+lappend sysman_commands passwd
+proc cmd_passwd { params hosts ignore } {
+    global hdata prompt linepat sids
+    up timeout
+       
+    set user ""
+    set new_passwd ""
+    if { ![empty $params] } {
+	set user [car $params]
+	if { [llength $params] > 1 } {
+	    set new_passwd [lindex $params 1]
+	}
+    }
+
+    stty -echo
+    if { [empty $user] } {
+	set old_passwd [input "Old password: "]; puts ""
+    }
+    if { [empty $new_passwd] } {
+	set new_passwd [input "New password: "]; puts ""
+	set test_passwd [input "Re-enter password: "]; puts ""
+	if { ![equal $new_passwd $test_passwd] } {
+	    error "Passwords do not match"
+	}
+    }
+    stty echo
+   
+    foreach host $hosts {
+	switch_to $sids($host)
+	title stdout
+	send "passwd $user\r"
+	if { [empty $user] } {
+	    expect {
+		"password:" { send "$old_passwd\r" }
+		-re "(.*)\r\n$prompt" { error "$expect_out(1,string)" }	    
+	    }
+	}
+	expect {
+	    "password:" { send "$new_passwd\r" }
+	    -re "(.*)\r\n$prompt" { error "$expect_out(1,string)" }
+	}
+	expect {
+	    "password:" { send "$new_passwd\r" } 
+	    -re "(.*)\r\n$prompt" { error "$expect_out(1,string)" }	    
+	}
+	expect {
+	    -re "(.*)\r\n$prompt" {}
+	    -re "(.*)\r\n\[^\r]*password:" {
+		set info $expect_out(1,string)
+		send "\003"
+		expect -re $prompt
+		error "$info" 
+	    }
+	}
+	catch { puts $expect_out(1,string) }
+    }
+}
+
+#----------------------------------------
+
+proc quick_connect { host } {
+    global hosts hdata prompt sids names
+    up spawn_id timeout
+
+    set msg "Could not quick-connect to $host"
+    
+    spawn telnet $hdata($host,address)
+    set sid $spawn_id
+
+    expect {
+	"login:" {}
+	eof { close -i $sid; error $msg }
+	timeout { close -i $sid; error $msg }
+    }
+    send "$hdata($host,login)\r"
+    expect {
+	"Password:" {}
+	eof { close -i $sid; error $msg }
+	timeout { close -i $sid; error $msg }
+    }
+    send "$hdata($host,password)\r"
+    expect {
+	-re "incorrect|failure" { close -i $sid; error $msg }
+	-re $prompt {}
+	eof { close -i $sid; error $msg }
+	timeout { close -i $sid; error $msg }
+    }
+    set names($sid) $host
+    rexec -noconvert "stty -echo"
+    return $sid
+}
+
+proc emergency_kill { host } {
+    global hosts hdata prompt sids names
+    up spawn_id timeout
+    
+    
+    puts "-- connecting to $host"
+    set sid [quick_connect $host]
+    switch_to $sid
+    puts "-- connected"
+
+    set ps_line [rexec "ps -ef | grep '$hdata($host,tty)' | grep '$hdata($host,command)'"]
+    puts "-- process: $ps_line"
+    if { ![empty $ps_line] } {
+	puts "-- kill -9 [lindex $ps_line 1]"
+	rexec "kill -9 [lindex $ps_line 1]"
+    }
+    unset names($sid)
+    close -i $sid
+
+    switch_to $sids($host)
+    rexec "stty sane"
+    rexec "stty -echo"
+}
+
+catch { source sysman02.exp }	
+	

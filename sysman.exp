@@ -1,0 +1,1120 @@
+#!/usr/bin/expect --
+
+####################################################################################
+#
+# Program: SYSMAN 
+# Version: 1.1
+#
+# Purpose: Multiple host management (similar to VMS's SYSMAN) with file transfer,
+#          remote execution of local scripts and automatic conversion of commands 
+#          to differrent OS's
+#
+# Code and design by Ron Pressler
+# Revision:   1/5/00 Ron Pressler
+#            30/8/00 Ron Pressler
+#            12/9/00 Ron Pressler
+#
+# Architecture: The program opens concurrent telnet connections and communicates
+#               with the hosts through them. The command undergo transltation on
+#               according to the specifications in the file convert.dat
+#               File transfers are accomplished through telnet as well
+#
+# Future features: 
+#      - Parallel execution of local scripts on all hosts
+#                  
+####################################################################################
+
+
+#-------------------------------------------------------
+# Global variables and settings
+#
+
+source sysman.help
+source util.exp
+
+log_user 0
+set timeout -1
+
+# global vars
+
+set groups_file "groups.dat"
+set convert_file "convert.dat"
+set hdata_file "hosts.dat"
+
+set sids(0) ""         ;# lookup spawn_id by name
+set names(0) ""        ;# lookup name by sid
+set hosts {}           ;# a list of all hosts
+set hosts_sids {}      ;# hosts' sids: automatically synchronized with hosts
+set hdata(0) ""        ;# host info
+set sysman_commands {} ;# a list of all sysman commands
+set sysman_vars {}     ;# a list of all sysman environment variables
+
+# this flag is set when we interrupt the program with ^C
+set interrupt 0
+# this flag is set when we're running a command on the local shell (used for ^C handler)
+set local_action 0
+
+set rsh_functions(0) rsh
+set rsh_functions(1) rsh_par
+
+#------------------- sysman environment variables ------------------
+
+lappend sysman_vars timeout
+set var_timeout 5
+
+lappend sysman_vars echo
+set var_echo 0
+
+lappend sysman_vars convert
+set var_convert 0
+
+lappend sysman_vars debug
+set var_debug 0
+
+lappend sysman_vars parallel
+set var_parallel 1
+
+lappend sysman_vars color
+set var_color 33
+
+lappend sysman_vars comment
+set var_comment \#
+
+#---------------------------------------------------------
+# These functions are the heart of SYSMAN
+# DO NOT touch them unless you really really know what you're doing
+# (and that includes a thorough knowledge of Expect)
+#
+
+proc rexec { args } {
+
+# arguments: command
+# flags: -noconvert, -i (sid), -notest
+# executes a command on a remote system and returns the response
+# used internally by sysman
+
+    global prompt var_convert hdata names
+    up spawn_id timeout
+    
+    if { ![empty [set tmp [extract_flag args "notest" 0]]] } {
+	set notest 1
+    } else {
+	set notest 0 
+    }
+
+    set sid [extract_sid args]
+
+    eval "send_command $args -i $sid"
+
+    set res ""
+    expect { 
+	-i $sid 
+	-re (.*)\r\n  { 
+	    append res "$expect_out(1,string)\n"
+	    exp_continue
+	}
+	-re "^$prompt" {}
+    }
+    set res [string trimright $res "\n"]
+    set ret_val 0
+    
+    if { !$notest } {
+	send -i $sid "echo $?\r"
+	set ret_val -1
+	expect { 
+	    -i $sid 
+	    -re (\[^\r]*)\r\n  { 
+		set ret_val $expect_out(1,string)
+		exp_continue
+	    }
+	    -re "^$prompt" {}
+	}
+    }
+    if { $ret_val != 0 } {
+	#puts "ret_val = $ret_val"
+	error $res
+    } else {
+	return $res
+    }
+}
+
+proc rsh { hosts command output args } {
+    
+    # this is sysman's most important procedure. it executes a command or a stream of commands
+    # on a list of hosts, and redirects their output to the file specified by $output
+
+    global hdata sids names prompt interrupt var_echo
+    up timeout
+    
+    if [empty $hosts] {
+	return
+    }
+    
+    set hinfo(0) {} ;# misc host info
+    set final_output [get_final_output $output $hosts]
+    
+    foreach host $hosts {
+	switch_to $sids($host)
+	
+	if { ![empty $final_output] } {
+	    # we have an output conflict
+	    title $final_output
+	}
+	set hinfo($host,output) [parse $output]
+	
+	if { ![equal $hinfo($host,output) stdout] } {
+	    set hinfo($host,output) [open $hinfo($host,output) w]
+	}
+	
+	if { ![empty $command] } {
+	    if { ![equal $hinfo($host,output) stdout] } {
+		# we're piping so we need to take away the tty by piping into cat
+		set cmd "$command | cat"
+	    } else {
+		set cmd $command
+	    }
+	    set hdata($host,command) $cmd
+	    if { ![send_command $cmd] } {
+		return
+	    }
+	}
+	expect {
+	    -re "^$prompt" {}
+	    -re "^(\[^\r]*)\r\n" {
+		puts $hinfo($host,output) "$expect_out(1,string)"
+		exp_continue
+	    }   
+	}
+	if { ![equal $hinfo($host,output) stdout] } {
+	    catch { close $hinfo($host,output) }
+	}
+    }
+}
+
+proc rsh_par { hosts command output args } {
+    # parallel execution
+    # this is sysman's most important procedure. it executes a command or a stream of commands
+    # on a list of hosts, and redirects their output to the file specified by $output
+
+    global hdata sids names prompt interrupt var_echo
+    up timeout
+    
+    if [empty $hosts] {
+	return
+    }
+    
+    set hinfo(0) {} ;# misc host info
+    set final_output [get_final_output $output $hosts]
+    
+    foreach host $hosts {
+	set hinfo($host,output) [parse $output]
+
+	if { ![empty $command] } {
+	    if { ![equal $hinfo($host,output) stdout] } {
+		# we're piping so we need to take away the tty by piping into cat
+		set cmd "$command | cat"
+	    } else {
+		set cmd "$command"
+	    }
+	    set hdata($host,command) $cmd
+	    if { ![send_command -i $sids($host) "$cmd"] } {
+		return
+	    }
+	}
+    }
+
+    if { [empty $final_output] } {
+	set conflict 0
+    } else {
+	set conflict 1
+    }
+
+    global tmp_hosts_sids
+    set tmp_hosts_sids [lookup sids $hosts]
+
+    if $conflict {
+	set pending_output_sids $tmp_hosts_sids
+	set to_disconnect {}
+	set output_owner ""
+	foreach sid $tmp_hosts_sids {
+	    set buffer($sid) {}
+	}
+    } else {
+	# open the files
+	foreach host $hosts {
+	    if { ![equal $hinfo($host,output) stdout] } {
+		set hinfo($host,output) [open $hinfo($host,output) w]
+	    }
+	}
+    }
+
+    expect {
+	-i tmp_hosts_sids
+	-re "^$prompt" {
+	    set sid $expect_out(spawn_id)
+	    set host $names($sid)
+	    if $conflict {
+		if { [equal $sid $output_owner] } {
+		    if { ![equal $hinfo($host,output) stdout] } {
+			catch { close $hinfo($host,output) }
+		    }
+		    lremove_item pending_output_sids $sid
+		    set output_owner ""
+		}
+	    } else {
+		if { ![equal $hinfo($host,output) stdout] } {
+		    catch { close $hinfo($host,output) }
+		}
+	    }
+	    lremove_item tmp_hosts_sids $sid
+	    if { ![empty $tmp_hosts_sids] } {
+		exp_continue
+	    }
+	}
+	-re "^(\[^\r]*)\r\n" {
+	    set sid $expect_out(spawn_id)
+	    set host $names($sid)
+	    if $conflict {
+		if { [empty $output_owner] } {
+		    set output_owner $sid
+		    
+		    title $final_output
+		    if { ![equal $hinfo($host,output) stdout] } {
+			# we are now starting output so open the file
+			set hinfo($host,output) [open $hinfo($host,output) w]
+		    }
+		    puts -nonewline $hinfo($host,output) $buffer($sid)
+		}
+		if { [equal $sid $output_owner] } {
+		    puts $hinfo($host,output) "$expect_out(1,string)"
+		} else {
+		    append buffer($sid) "$expect_out(1,string)\n"
+		}
+	    } else {
+		puts $hinfo($host,output) "$expect_out(1,string)"
+	    }
+	    exp_continue
+	}
+	eof {
+	    set sid $expect_out(spawn_id)
+	    set host $names($sid)
+	    if $conflict {
+		if { [empty $output_owner] } {
+		    title $final_output
+		    puts -nonewline $hinfo($host,output) $buffer($sid)
+		}
+		if { [equal $output_owner $sid] } {
+		    set output_owner ""
+		}
+		if { [empty $output_owner] } {
+		    lremove_item pending_output_sids $sid
+		    disconnect $host
+		} else {
+		    lappend to_disconnect $sid
+		}
+	    } else {
+		disconnect $host
+	    }
+	    lremove_item tmp_hosts_sids $sid
+	    if { ![empty $tmp_hosts_sids] } {
+		exp_continue
+	    }
+	}
+    }
+
+    if $conflict {
+	# puts ":: pending - [lookup names $pending_output_sids]"
+	foreach sid $pending_output_sids {
+	    set host $names($sid)
+	    title $final_output
+	    if { ![equal $hinfo($host,output) stdout] } {
+		# we are now starting output so open the file
+		set hinfo($host,output) [open $hinfo($host,output) w]
+	    }
+	    puts -nonewline $hinfo($host,output) $buffer($sid)
+	    if { ![equal $hinfo($host,output) stdout] } {
+		catch { close $hinfo($host,output) }
+	    }
+	    if { [member $to_disconnect $sid] } {
+		disconnect $host
+		lremove_item to_disconnect $sid
+	    }
+	}
+	
+	foreach sid $to_disconnect {
+	    set host $names($sid)
+	    title $final_output
+	    disconnect $host
+	}
+    }
+}
+
+proc send_command { args } {
+    # sends a command to a host after conversion
+    # args: command
+    # flags: -noconvert, -i (sid) 
+    
+    global sids names interrupt var_echo var_convert var_comment
+    up spawn_id
+
+    if { ![empty [extract_flag args "noconvert" 0]] } {
+	set convert 0 
+    } else {
+	set convert $var_convert
+    }
+
+    set sid [extract_sid args]
+    set host $names($sid)
+    set command [car $args]
+
+    # do not send comments
+    if { ![empty $var_comment] && [regexp "^\[ \t]*[set var_comment].*" $command] } {
+	return 0
+    }
+
+    set command [parse $command host]
+    if { $convert } {
+	set command [convert $host $command]
+    }
+
+    # echo the command if echoing is turned on
+    if { $var_echo } {
+	puts "$command"
+    }
+    
+    # check to see if we're interrupted
+    if { $interrupt } {
+	return
+    }
+    
+    # send the command
+    send -i $sid -- "$command\r"
+
+    return 1
+}
+
+proc rsc { hosts script params output } {
+    
+    # runs the script specified by $script on a list of hosts using rsh
+ 
+    global hdata sids prompt linepat var_parallel rsh_functions
+    up timeout
+
+    if [empty $hosts] {
+	return
+    }
+
+    switch_to $sids(local)
+    set script [full_path $script]
+    set file [open $script r]
+    set line [gets $file]
+    if { ![regexp "^#!(.*)" $line ignore shell] } {
+	close $file
+	error "\"$script\" is not a script"
+    }
+    close $file
+    
+    puts -nonewline "sending...  "; flush stdout
+    foreach host $hosts {
+	switch_to $sids($host)
+	
+	if { [equal $output stdout] } {
+	    set cmd "$shell << '::END-[pid]'"
+	} else {
+	    set cmd "$shell << '::END-[pid]' | cat"
+	}
+	set hdata($host,command) $cmd
+	rexec -notest $cmd
+
+	if { [empty $params] } {
+	    set params "''"
+	}
+
+	send "set $params\r"
+	expect -re $prompt
+
+	set file [open $script r]
+	while { [gets $file command] != -1 } {
+	    if { [send_command $command] } {
+		blinker
+		expect -re $prompt
+	    }
+	}
+	
+	send "::END-[pid]\r"
+
+    }
+    puts "\b"
+    $rsh_functions($var_parallel) $hosts "" $output
+}
+
+proc get_final_output { output hosts } {
+
+    # returns the actual file the pipe (or file) in $output eventually writes to
+
+    global user_spawn_id
+
+    if [equal $output stdout] {
+	return stdout
+    }
+
+    # try two different hosts
+    set host [car $hosts]
+    set output_a [open [parse $output] w]
+    if { [llength $hosts] > 1 } {
+	set host [lindex $hosts 1]
+	set output_b [open [parse $output] w]
+    }
+
+    set final_output ""
+    if { [llength $hosts] == 1 || [outputcmp $output_a $output_b] } {
+	set final_output [lastout $output_a]
+	if { [string match "/dev/*" $final_output] } { 
+	    # tty
+	    set final_output stdout
+	}
+    }
+    # one host not writing to stdout
+    if { [llength $hosts] == 1 && ![equal $final_output stdout] } {
+	set final_output ""
+    }
+
+    if { ![equal $output_a stdout] } { catch { close $output_a } }
+    if { [info exists output_b] && ![equal $output_b stdout] } { catch { close $output_b } }
+
+    return $final_output
+}
+    
+proc convert { host command } {
+
+# converts the command according to the specifications in convert.dat 
+
+    global var_convert hdata
+    if $var_convert {
+	eval $hdata($host,convert)
+    }
+    return $command
+}
+
+#---------------------- utility functions -----------------------------
+
+proc title { output } {
+    up host
+    global var_color
+
+    if { $var_color != 0 && [equal $output stdout] } {
+	set str "\x1b\[01\;[set var_color]m$host:\x1b\[0m"
+    } else {
+	set str "$host:"
+    }
+    puts_file $output $str
+}
+
+proc full_path { filename } {
+    up spawn_id
+    
+    if { [string compare [string index $filename 0] "/"] == 0 } {
+	return $filename
+    }
+    return "[rexec "pwd"]/$filename"
+}
+
+proc rpid { args } {
+    up spawn_id
+    if { [llength $args] > 0 } {
+	set spawn_id [car $args]
+    }
+    rexec "echo $$"
+}
+
+proc extract_sid { var_args_str } {
+    upvar $var_args_str args_str
+    up spawn_id
+
+    if { ![empty [set tmp [extract_flag args_str "i" 1]]] } {
+	set sid [lindex $tmp 1]
+    } else {
+	set sid $spawn_id
+    }
+    return $sid
+}
+
+#---------------------- connect/disconnect ------------------------------
+
+proc connect { tmp_hosts login password } {
+    global hosts hdata prompt sids names user_spawn_id
+    up spawn_id timeout
+
+    puts "Connecting..."
+   
+    foreach host $tmp_hosts {
+	set address($host) [lindex [get_host_data $host] 0]
+	if { [empty $address($host)] } {
+	    set address($host) $host
+	}
+	set pids($host) [spawn_named $host "telnet $address($host)"]
+	set state($spawn_id) 0
+    }
+
+    global tmp_hosts_sids
+    set tmp_hosts_sids [lookup sids $tmp_hosts]
+    set connected {}
+    expect {
+	-i tmp_hosts_sids
+	-re "incorrect|failure" {
+	    set sid $expect_out(spawn_id)
+	    set host $names($sid)
+	    if { $state($sid) < 3 } {
+		lremove_item tmp_hosts_sids $sid
+		close -i $sid; wait -i $sid
+		puts "Connecting to: $address($host) - failed"
+		if { ![empty $tmp_hosts_sids] } {
+		    exp_continue
+		} else {
+		    return 
+		}
+	    } else {
+		exp_continue
+	    }
+	}
+	eof { 
+	    set sid $expect_out(spawn_id)
+	    set host $names($sid)
+	    lremove_item tmp_hosts_sids $sid
+	    puts "Connecting to: $address($host) - failed"
+	    if { ![empty $tmp_hosts_sids] } {
+		exp_continue
+	    } else {
+		return 
+	    }
+	}
+	timeout {
+	    foreach sid $tmp_hosts_sids {
+		set host $names($sid)
+		puts "Connecting to $address($host) - Timed out"
+		close -i $sid; wait -i $sid
+	    }
+	}
+	"login:" {
+	    set sid $expect_out(spawn_id)
+	    if { $state($sid) == 0 } {
+		send -i $sid "$login\r"
+		set state($sid) 1
+	    }
+	    exp_continue
+	}
+	"Password:" {
+	    set sid $expect_out(spawn_id)
+	    if { $state($sid) == 1 } {	    
+		send -i $sid "$password\r"
+		set state($sid) 2
+	    }
+	    exp_continue
+	}
+	-re $prompt {
+	    set sid $expect_out(spawn_id)
+	    set host $names($sid)
+	    if { $state($sid) == 2 } {	    
+		set state($sid) 3
+		lremove_item tmp_hosts_sids $sid
+		connect_host $host $address($host) $login $password
+		puts "Connecting to: $address($host) - ok"
+		lappend connected $sid
+		if { ![empty $tmp_hosts_sids] } {
+		    exp_continue
+		}
+	    } else {
+		exp_continue
+	    }
+	}
+    }
+    unset tmp_hosts_sids
+}
+
+proc connect_host { host address login password } {
+    global hosts hdata sids names var_convert no_groups
+    
+    switch_to $sids($host)
+    
+    rexec -noconvert "stty -echo"
+    
+    lappend hosts $host
+    set hdata($host,sid) $spawn_id
+    set hdata($host,address) $address
+    set hdata($host,login) $login
+    set hdata($host,password) $password
+    if { !$no_groups } {
+	set hdata($host,groups) [get_groups $host]
+    }
+    if { $var_convert } {
+	set hdata($host,convert) [get_convert $host]
+    } else {
+	set hdata($host,convert) ""
+    }
+    set hdata($host,pid) [rpid]    
+    set hdata($host,tty) [rexec "tty"]
+    regexp "/dev/(.*)" $hdata($host,tty) ignore hdata($host,tty)  
+}
+
+
+proc disconnect { host } {
+    global sids names hosts
+
+    catch { close -i $sids($host) }
+    puts "SYSMAN: $host was disconnected"
+    set sid $sids($host)
+    lremove hosts [lsearch $hosts $host]
+    unset sids($host)
+    unset names($sid)
+}
+
+#----------------- input files processing --------------------------
+
+proc read_groups {} {
+    global groups groups_file
+
+    set file [open $groups_file "r"]
+    set group ""
+    while { [gets $file line] != -1 } {
+	set line [string trim $line]
+	if { [empty $line] } { ;# empty line
+	    set group ""
+	} elseif { [empty $group] } { ;# group name 
+	    set group $line
+	    set groups($group) ""
+	} else { ;# host name
+	    lappend groups($group) $line
+	}
+    }
+    close $file
+    foreach group [array names groups] {
+	set groups($group) [get_hosts $groups($group)]
+    }
+}
+
+proc get_groups { host } {
+    global groups
+    reverse_array groups tmp $host
+    if [info exists tmp($host)] {
+	return $tmp($host)
+    } else {
+	return ""
+    }
+}
+
+proc get_convert { host } {
+    global hdata convert_file
+
+    set convert ""
+
+    if [catch { open $convert_file "r" } file] {
+	return ""
+    }
+    while { [gets $file line] != -1 } {
+	set line [string trim $line]
+	;# group:oldstring:newstring
+	set com [split $line ":"] 
+	set group [lindex $com 0]
+	if { [equal $group $host] || [equal $group "all"] || [member $hdata($host,groups) $group] } {
+	    append convert "regsub -- \{[lindex $com 1]\} \$command \{[lindex $com 2]\} command\n"
+	}
+    }
+    close $file
+
+    return $convert
+}
+
+proc get_hosts { list args } {
+    global groups hosts
+    
+    if { [llength $args] > 0 } {
+	set from [car $args]
+    } else {
+	set from ""
+    }
+
+    set all_tilda 1
+    foreach item $list {
+	if { ![string match "~*" $item] } {
+	    set all_tilda 0
+	}
+    }
+    if $all_tilda {
+	set hosts_list $hosts
+    } else {
+	set hosts_list {}
+    }
+
+    foreach item $list {
+	if { ![string match "~*" $item] } {
+	    if [member [array names groups] $item] {
+		eval lappend_new hosts_list [eval get_hosts [list $groups($item)] $args] ;# recursive call
+	    } else {
+		if { ![empty $from] } {
+		    eval lappend hosts_list [lmatch $from $item]
+		} else {
+		    lappend hosts_list $item
+		}
+	    }
+	} else {
+	    regexp "~(.*)" $item ignore item
+	    if [member [array names groups] $item] {
+		foreach thing [eval get_hosts [list $groups($item)] $args] {
+		    lremove_item hosts_list $thing
+		}
+	    } else {
+		lremove_item hosts_list $item
+	    }	    
+	}
+    }
+    return $hosts_list
+}
+
+proc get_host_data { host } {
+    global hdata_file no_hdata
+
+    if { $no_hdata } {
+	return ""
+    }
+
+    set file [open $hdata_file]
+    spawn -open $file
+    set res ""
+    expect {
+	-re "(^|\n)[set host]( |\t)*(\[^\n]*)" { set res $expect_out(3,string)}
+	eof {}
+    }
+    return $res
+}
+#------------------ interface: command processing -----------------------
+
+proc do_command { command hosts } {
+# main command interpreter function
+
+    global hdata sysman_commands var_echo var_convert var_parallel rsh_functions
+    up timeout
+    
+    set command [string trim $command]
+    # parse all but $host
+    set command [parse $command -n host]
+
+    # is the command "!<hosts/groups>: <command>" ?
+    # if so run do_command on the specified hosts
+    if [hosts_command $command host_names new_command]  {
+	return [do_command $new_command $host_names]
+    }
+ 
+    # get the command's local output redirection
+    set pipe [get_redirection $command command]
+
+    if { [empty $command] } {
+	return ""
+    }
+
+    global var_debug
+    if { $var_debug } {
+	puts "-- command = $command, pipe = $pipe, hosts = $hosts"
+    }
+    # is the command of the form "!<command>" ?
+    # if so it might be a sysman command
+    # or a local command
+    if { [is_sysman_command $command  command] } {
+	if [member $sysman_commands [car $command]] {
+	    return [sysman_command $command $hosts $pipe]
+	} else {
+	    global local_action
+	    set local_action 1
+	    rsh local $command $pipe
+	    set local_action 0
+	    return
+	}
+    }
+
+    # otherwise run command on all hosts
+    if { ![empty $hosts] } {
+	$rsh_functions($var_parallel) $hosts $command $pipe
+    }
+}
+
+proc hosts_command { command var_host_names var_new_command } {
+    global hosts
+    upvar $var_host_names host_names 
+    upvar $var_new_command new_command
+
+    if { [regexp "^\[ \t]*\\\\\(!.*)$" $command ignore new_command] } {
+	# puts "-- not hosts"
+	return 0
+    }
+    if [regexp "^\[ \t]*!\[ \t]*(\[^:]*):(.*)" $command ignore names new_command]  {
+	set host_names [get_hosts $names $hosts]
+	if { [llength $host_names] == 0 } {
+	    error "no host $names"
+	}
+	return 1
+    }
+    return 0
+}
+
+proc get_redirection { command var_new_command } {
+    upvar $var_new_command new_command
+
+    if { [regexp "(.*(\[^ \t]+).*\[^\\])!(\[^!]*)" $command ignore new_command ignore pipe] } {
+	    set pipe [concat "| cat " $pipe]
+    } else {
+	set pipe stdout
+    }
+    return $pipe
+}
+
+proc is_sysman_command { command var_command } {
+    upvar $var_command out_command
+    
+    if { [regexp "^\[ \t]*\\\\\(!.*)$" $command ignore out_command] } {
+	# puts "-- not sysman"
+	return 0
+    }
+    return [regexp "^\[ \t]*! *(.*)" $command ignore out_command] 
+}
+    
+proc sysman_command { command hosts pipe } {
+    up timeout
+
+    set cmd [car $command]
+    set params [cdr $command]
+    cmd_$cmd $params $hosts $pipe
+}
+
+proc parse { line args } {
+    up host
+
+#    while { [regsub "\\$(\[a-zA-Z0-9\*]+)" $line "\[lookupvar \\1 $args\]" line] } {}
+#    eval "set line \[concat $line\]"
+
+    set rest $line
+    set res ""
+    while { [regexp "(\[^\$]*)\\$(\[a-zA-Z0-9\*]+)(.*)" $rest ignore tmp var rest] } {
+        append res $tmp [lookupvar $var $args]
+    }   
+    append res $rest
+    return $res
+}
+
+proc lookupvar { var args } {
+    up host
+    global argv hosts
+
+    set args [car $args]
+    if { ![empty $args] } {
+	set negate [expr 1 - [empty [extract_flag args "n" 0]]]
+	if { $negate == [member $args $var]  } {
+	    # do not parse
+	    return "\$$var"
+	}
+    }
+	
+    set vars(host) { $host }
+    set vars(hosts) { $hosts }
+
+    if [empty $var] { 
+	error "Unrecognized variable"
+    }
+    if { [string match "\[0-9]*" $var] } {
+	return [lindex $argv [expr $var - 1]]
+    }
+    if { [equal "*" $var] } {
+	return $argv
+    }
+    if { [member [array names vars] $var] } {
+	eval return $vars($var)
+    } else {
+	return "\$$var" ;# don't substitute
+    }
+}
+
+proc update_completions {} {
+    global sysman_commands sysman_vars hosts groups hosts_sids sids
+    
+    if { ![info exists sids(dumbsh)] } {
+	return
+    }
+    dumbsh complete "[cart "!" $sysman_commands] $sysman_vars [array names groups]"
+}
+
+#-------------- event handlers --------------------
+
+proc sigint_action {} {
+    global hosts sids hdata prompt interrupt local_action
+    if { !$local_action } {
+	# foreach host $hosts { emergency_kill $host }
+	send -i [lookup sids $hosts] "\003" 
+    } else {
+	send -i $sids(local) "\003"
+    }
+    set interrupt 1
+}
+
+proc hosts_updated { args } {
+    global hosts sids hosts_sids
+    set hosts_sids [lookup sids $hosts]
+
+    # update_completions
+}
+    
+
+#-------------------------------------------------------
+#--------------------- MAIN ----------------------------
+#-------------------------------------------------------
+
+# chain modules
+catch { source sysman01.exp }
+
+#-------- handle command line arguments -------------
+
+if { ![empty [extract_flag argv h 0]] } {
+    puts $help
+    exit
+}
+if { ![empty [set tmp_hosts [extract_flag argv "n" -1]]] } {
+    set tmp_hosts [cdr $tmp_hosts]
+}
+if { ![empty [lindex $argv 0]] && ![string match "-*" [lindex $argv 0]] } {
+    set input [open [lindex $argv 0]]
+    fconfigure $input -buffering none
+    shift argv
+} else {
+    set input stdin
+}
+# handle -- (end of flags)
+regsub -- "--" $argv "" argv
+
+# put banner if we're interactive
+if { [equal $input stdin] } {
+    puts $banner
+}
+
+#------- handle groups and conversion files ---------
+
+if ![ catch { open $hdata_file } file ] {
+    set no_hdata 0
+    close $file
+} else {
+    puts stderr "$hdata_file was not found."
+    set no_hdata 1
+}
+
+if ![catch { open $groups_file } file] {
+    set no_groups 0
+    close $file
+    read_groups
+} else {
+    puts stderr "$groups_file was not found. Hosts groups are not available." 
+    set no_groups 1
+}
+
+if ![ catch { open $convert_file } file ] {
+    set var_convert 1
+    close $file
+} else {
+    puts stderr "$convert_file was not found. Command conversions are not available."
+    set var_convert 0
+}
+
+#-------- basic setup -----------------------------
+
+# spawn local shell
+
+spawn_named local $env(SHELL)
+set hdata(local,convert) {}
+expect -re $prompt
+rexec "stty -echo"
+set hdata(local,pid) [rpid]
+
+# spawn dumbsh
+
+spawn_named dumbsh { dumbsh "sysman> " }
+set interface $sids(dumbsh)
+update_completions
+
+# set terminal mode
+
+stty -raw
+
+# login
+
+if { ![empty $tmp_hosts] } {
+    cmd_connect $tmp_hosts - -
+    hosts_updated
+}
+
+
+#----- setup handlers ------------------------
+
+expect_after {
+    -i $any_spawn_id
+    eof { disconnect $names($expect_out(spawn_id)) }
+    timeout { sigint_action; error "operation timed out" }
+}
+
+trace variable hosts w hosts_updated
+
+trap -code { sigint_action; return -code error} SIGINT 
+
+#---------- noninteractive mode --------------
+
+if { ![equal $input stdin] } {
+    set line_num 0
+    while { -1 != [gets $input command] } {
+	incr line_num
+	if { [catch {do_command $command $hosts} out] } {
+	    puts stderr "SYSMAN error in line $line_num: $out"
+	    if { $var_debug } { 
+		puts $errorInfo 
+	    }
+	}
+    }
+    exit
+}
+
+#------------ interactive mode ---------------
+
+set command ""
+interact {
+    -u $user_spawn_id
+    "\003" { 
+	;# erase the current line
+	send "\001"
+	send "\013"
+    }
+    -i interface
+    -reset -re "\r\n:$linepat" {
+	set command $interact_out(1,string)
+	puts ""
+	set interrupt 0
+	set local_action 0
+	if [catch {do_command $command $hosts} out] {
+	    switch -- $out {
+		default {
+		    puts stderr "SYSMAN: $out"
+		    if { $var_debug } { 
+			puts $errorInfo 
+		    }
+		}
+	    }
+	}
+    }
+    -reset eof { puts "!exit"; exit }
+    
+    -input hosts_sids
+    -reset -iwrite eof { disconnect $names($interact_out(spawn_id)) }
+
+    -reset -iwrite -re $prompt  { 
+	set host $names($interact_out(spawn_id))
+    }
+    -reset -iwrite -re $linepat { 
+	set host $names($interact_out(spawn_id))
+    }
+}
+
+#------------------ end of SYSMAN code -----------------
+
+	

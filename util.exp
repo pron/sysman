@@ -1,0 +1,394 @@
+# Copyright (c) 2000,2013 Ron Pressler
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+# --------- global settings ---------
+
+#------------------------------------
+
+set prompt "(\[^\r]*)(%|>|#|\\\$) $"
+set linepat "(\[^\r]*)\r\n"
+
+proc spy { var_var } {
+    upvar $var_var var
+    puts stderr ":: $var_var = $var"
+}
+
+proc empty { str } {
+    string match "" $str
+}
+
+proc space { str } {
+    regexp "^( |\t)*$" $str
+}
+
+proc lmatch { list pattern } {
+    set elem [lsearch $list $pattern]
+    if { $elem < 0 } return ""
+    return [concat [lindex $list $elem] \
+	    [lmatch [lrange $list [expr $elem + 1] [llength $list]] $pattern]]
+}
+
+proc lappend_new { lvar args } {
+    upvar $lvar list
+    foreach item $args {
+	if { ![member $list $item] } {
+	    lappend list $item
+	}
+    }
+}
+    
+proc lookup { vartable list } {
+    upvar $vartable table
+
+    set res {}
+    foreach item $list {
+	lappend res $table($item)
+    }
+    return $res
+}
+
+proc member { list item } {
+    expr [lsearch $list $item] >= 0
+}
+
+proc car { list } { 
+    lindex $list 0 
+}
+
+proc cdr { list } { 
+    lrange $list 1 [llength $list] 
+}
+
+proc last { list } {
+    lindex $list [expr [llength $list] - 1]
+}
+
+proc shift { lvar } {
+    upvar $lvar list
+    set list [cdr $list]
+}
+
+proc equal { a b } {
+    expr [string compare [string trim $a] [string trim $b]] == 0
+}
+
+proc lremove { lvar index } {
+    upvar $lvar list
+    set list [lreplace $list $index $index]
+}
+
+proc filter { list pred } {
+    set res {}
+    foreach item $list {
+	if { [eval $pred [list $item]] } {
+	    lappend res $item
+	}
+    }
+    return $res
+}
+
+proc map { list op } {
+    set res {}
+    foreach item $list {
+	lappend res [eval $op $item]
+    }
+    return $res
+}
+
+proc lremove_item { lvar item } {
+    upvar $lvar list
+    lremove list [lsearch $list $item]
+}
+
+proc cart { args } {
+    set res {}
+    
+    if { [llength $args] <= 1 } {
+	return [car $args]
+    }
+    set rest [eval "cart [cdr $args]"]
+    foreach item1 [car $args] {
+	foreach item2 $rest {
+	    lappend res "$item1$item2"
+	}
+    }
+    return $res
+}
+
+proc reverse_array { avar bvar args } {
+    upvar $avar a
+    upvar $bvar b
+    
+    set list ""
+    if { [llength $args] > 0 } {
+	set list [car $args]
+    }
+
+    foreach index [array names a] {
+	foreach item $a($index) {
+	    if { [empty $list] || [member $list $item] } {
+		lappend b($item) $index
+	    }
+	}
+    }
+}
+
+proc group { items values } {
+    set i 0
+    foreach value $values {
+	lappend a($value) [lindex $items $i]
+	incr i
+    }
+    foreach index [array names a] {
+	lappend res $a($index)
+    }
+    return $res
+}
+
+proc with { val commands } {
+    regsub -all "(\[^\\])\\." $commands "\\1$val " commands
+    puts "-- $commands"
+    uplevel $commands
+}
+
+proc extract_flag { pvars name num_of_args } {
+    upvar $pvars params
+    
+    # handle --
+    set rest ""
+    set index [lsearch $params "--"]
+    set rest [lrange $params 0 [expr $index - 1]]
+    set params [lrange $params $index [llength $params]]
+
+    set res {}
+    set i 0
+    while { $i < [llength $params] } {
+	if { [string match "-$name" [lindex $params $i]] } {
+	    set res $name
+	    if { $num_of_args == -1 } {
+		while { [expr $i + 1] < [llength $params] &&
+		![string match "-*" [set tmp [lindex $params [expr $i + 1]]]] } {
+		    lappend res $tmp
+		    lremove params [expr $i + 1]
+		}
+	    } else {
+		for { set j 0 } { $j < $num_of_args } { incr j } {
+		    lappend res [lindex $params [expr $i + 1]]
+		    lremove params [expr $i + 1]
+		}
+	    }
+	    lremove params $i
+	} else {
+	    incr i
+	}   
+    }
+    set params [concat $params $rest]
+    return $res
+}
+   
+proc is_posint { val } {
+    regexp "\[1-9]\[0-9]*" $val
+}
+
+proc ip {} {
+    regexp ".*Name.*Address:(.*)\r" [exec nslookup `hostname`] ignore ip
+    return $ip
+}
+        
+proc up { args } {
+    foreach var $args {
+	uplevel "upvar $var $var"
+    }
+}
+	    
+proc switch_to { sid } {
+    up spawn_id
+    
+    set old ""
+    if [info exists spawn_id] {
+	set old $spawn_id
+    }
+    set spawn_id $sid
+    return $old
+}
+
+proc spawn_named { name command } {
+    global sids names 
+    up spawn_id stty_init
+
+    set pid [eval "spawn $command"]
+    set sids($name) $spawn_id
+    set names($spawn_id) $name
+
+    return $pid
+}
+
+proc tmpvar {} {
+    return "tmp_[info cmdcount]"
+}
+
+proc try_catch { try_block catch_block } {
+    if { [catch { uplevel $try_block } out] } {
+	up catch_out
+	set catch_out $out
+	uplevel $catch_block
+    }
+}
+
+
+#--------------- io  ------------------
+
+proc input { prompt } {
+    set timeout -1
+    send_tty $prompt
+    expect_tty -re "(.*)\n"
+    return $expect_out(1,string)
+}
+
+proc get_log_pass { log pass } {
+    upvar $log login
+    upvar $pass password
+    
+    stty echo
+    set login [input "login: "]
+    stty -echo
+    set password [input "Password: "]
+    stty echo
+    puts ""
+}
+
+proc print_array { avar } {
+    upvar $avar a
+    foreach index [array names a] {
+	puts "$index: $a($index)\n"
+    }
+}
+
+proc outputcmp { a b } {
+
+    if [equal $a $b] {
+	return 1
+    }
+    regexp "\ni(.*)$" [exec lsof -a -p [last [pid $a]] -d 1 -Fi] ignore a
+    regexp "\ni(.*)$" [exec lsof -a -p [last [pid $b]] -d 1 -Fi] ignore b
+    return [equal $a $b]
+}
+
+proc lastout { fd } {
+    regexp "\nn(\[^ ]*)" [exec lsof -a -p [last [pid $fd]] -d 1 -Fn] ignore res
+    return $res
+}
+
+proc puts_file { file args } {
+    if [equal $file stdout] {
+	eval puts $args
+    } else {
+	set f [open $file a]
+	# puts "-- writing to $file: $args"
+	eval puts $f $args
+	close $f
+    }
+}
+
+set blinker_index 0
+proc blinker {} {
+    global blinker_index
+    set chars { | / - \ }
+    
+    puts -nonewline "\b[lindex $chars $blinker_index]"
+    flush stdout
+    set blinker_index [expr ($blinker_index + 1) % [llength $chars]] 
+}
+
+#------------- streams --------------------
+
+proc tag { varobject args } {
+    upvar $varobject object
+    if { [llength $args] == 0 } {
+	if { ![regexp "(\[^:]*):" [car $object] ignore tag] } {
+	    error "$varobject not tagged"
+	    return ""
+	}
+	return $tag
+    }
+    set object "[car $args]: $object"
+    return $object
+}
+
+proc stream? { varobject } {
+    upvar $varobject object
+    if [catch {equal [tag object] stream} ] {
+	return 0
+    }
+    return 1
+}
+
+proc next { varobject } {
+    upvar $varobject object
+    if [empty $object] {
+	return ""
+    }
+    if { ![stream? object] } {
+	set tmp [car $object]
+	shift object
+	return $tmp
+    }
+    return [eval [cdr $object] object]
+}
+
+proc filestream { filename } {
+    set s "nextfs 0 $filename"
+    tag s stream
+    return $s
+}
+
+proc nextfs { file filename varstream } {
+    upvar $varstream s
+
+    if { [equal $file 0] } {
+	set file [open $filename]
+	set s "nextfs $file $filename"
+	tag s stream
+    }
+    if { [gets $file line] == -1 } {
+	close $file
+	set s ""
+	return ""
+    }
+    return "$line"
+}
+
+#------------------ dumbsh interface ---------------------------
+
+proc dumbsh { command args } {
+    global sids linepat
+
+    set spawn_id $sids(dumbsh)
+    switch -- $command {
+	complete {
+	    send -- "-- c\r"
+	    send "[car $args]\r"
+	    expect { 
+		-re " -- [set linepat](.*)\r\n" {}
+		eof { error "!!!!!!!!!! DUMBSH CRASHED !!!!!!!!!!" }
+	    }
+	}
+    }
+}
