@@ -183,7 +183,7 @@ Format:
 Whenever a list of host names (or a single host name) is needed, it should be given as a space separated list of host or group names. 
 The group names are the ones found in the groups.dat file, and the host names are the ones found in hosts.dat or (if not found there) the host's URL (or IP address). 
 The list is to include a list of all the hosts in the specified hosts/groups list. 
-You can exclude a host or a group from the list by prefixing its name with a tilda (~). 
+You can exclude a host or a group from the list by prefixing its name with a tilde (~). 
 If the list contains only names prefixed by a tilda, the expanded list will include all of those hosts currently connected except for those excluded.
 
 Examples: 
@@ -193,13 +193,18 @@ Assume: group1 = { host1 host2 }, group2 = { host2 host3 }, group3 = { group1 gr
 if we are connected to group1, then: 
 
 `!host1: <command>` - executes on host1 
+
 `!group2: <command>` - executes on host2 
+
 `!~group2: <command>` - executes on host1 
 
 If we are connected to group3, then: 
+
 `!group1 host3: <command>` - executes on host1, host2, host3 
-`!group1 ~group2: <command>` - executes on host1" 
-`!~group1: <command>: <command>` - executes on host3" 
+
+`!group1 ~group2: <command>` - executes on host1
+
+`!~group1: <command>: <command>` - executes on host3
  
 
 ### Local Redirection
