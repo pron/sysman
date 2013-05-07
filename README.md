@@ -33,11 +33,11 @@ In order to use sysman you will need the following:
 
 ### Command line
 
-sysman [sysman script filename] [-n <hosts/groups...>(.*)] [-- <command line arguments>]
+    sysman [sysman script filename] [-n <hosts/groups...>(.*)] [-- <command line arguments>]
 
-[sysman script filename] = a sysman script to run. 
-[-n <hosts/groups...>(.*)] = names of nodes or node-groups to connect to. 
-[-- <command line arguments>] = arguments for use in a sysman script.
+`[sysman script filename]` = a sysman script to run. 
+`[-n <hosts/groups...>(.*)]` = names of nodes or node-groups to connect to. 
+`[-- <command line arguments>]` = arguments for use in a sysman script.
 
 4.2 Basic Use
 
