@@ -1,5 +1,7 @@
 # sysman
 
+*NOTE: This is an old, old project (2000) tranferred to GitHub from sourceforge where it lay, dormant, for over a decade*
+
 ## Introduction
 
 sysman is a multi-host management utility similar to VMS's Sysman tool. With sysman it is possible to execute a command or run a script on multiple hosts simultaneously with the aid of additional features designed to make the life easier. 
@@ -244,9 +246,10 @@ The sysman comman line variables are interpreted by the procedure lookupvar.
  - Make sysman modular for OS's outside the Unix family. The OS can be specified in hosts.dat. 
  - Port the whole thing to SCHEME (requires porting Expect first) 
 
+
 ## License (MIT)
 
- Copyright (c) 2000,2013 Ron Pressler
+Copyright (c) 2000,2013 Ron Pressler
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
